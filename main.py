@@ -1,10 +1,8 @@
 import os
 import threading
-import time
 from flask import Flask
 import telebot
 import yfinance as yf
-import pandas as pd
 
 # --- SERVEUR WEB KEEP-ALIVE ---
 app = Flask(__name__)
@@ -30,25 +28,22 @@ def check_admin(message):
 # --- MODULE D'ANALYSE FINANCIÈRE (SMC & DXY) ---
 def get_market_analysis(symbol="EURUSD=X"):
     try:
-        # Récupération des données financières
         data = yf.download(tickers=symbol, period="5d", interval="1h", progress=False)
         dxy_data = yf.download(tickers="DX-Y.NYB", period="5d", interval="1h", progress=False)
 
         if data.empty:
             return "⚠️ Impossible de récupérer les données de marché."
 
-        # Derniers prix
-        last_close = data['Close'].iloc[-1]
-        dxy_close = dxy_data['Close'].iloc[-1] if not dxy_data.empty else "N/A"
+        last_close = float(data['Close'].iloc[-1])
+        dxy_close = float(dxy_data['Close'].iloc[-1]) if not dxy_data.empty else "N/A"
 
-        # Détection basique Fair Value Gap (FVG) sur la dernière bougie
-        high_prev2 = data['High'].iloc[-3]
-        low_current = data['Low'].iloc[-1]
+        high_prev2 = float(data['High'].iloc[-3])
+        low_current = float(data['Low'].iloc[-1])
         
         fvg_detected = "Aucun FVG détecté"
         if low_current > high_prev2:
             fvg_detected = "🚀 **FVG Haussier détecté !**"
-        elif data['High'].iloc[-1] < data['Low'].iloc[-3]:
+        elif float(data['High'].iloc[-1]) < float(data['Low'].iloc[-3]):
             fvg_detected = "📉 **FVG Baissier détecté !**"
 
         report = (
@@ -70,7 +65,7 @@ def handle_start(message):
         return
     global BOT_ACTIVE
     BOT_ACTIVE = True
-    bot.reply_to(message, "🚀 **CLTM Quant Engine [Rang S] Activé**\n\nUtilise la commande /analyse pour scanner le marché.")
+    bot.reply_to(message, "🚀 **CLTM Quant Engine [Rang S] Activé**\n\nUtilise /analyse pour lancer un scan de marché.")
 
 @bot.message_handler(commands=['status'])
 def handle_status(message):
@@ -89,11 +84,6 @@ def handle_analyse(message):
 
 def run_trading_engine():
     print("CLTM Quant Engine démarré...")
-    try:
-        bot.send_message(ADMIN_CHAT_ID, "🖥️ **Système prêt !**\nTape /analyse dans le tchat pour générer un rapport SMC/DXY.")
-    except Exception as e:
-        print(f"Erreur Telegram: {e}")
-
     bot.polling(non_stop=True, interval=2)
 
 if __name__ == "__main__":

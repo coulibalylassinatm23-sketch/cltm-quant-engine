@@ -1,14 +1,17 @@
 import os
 import threading
+import time
 from flask import Flask
 import telebot
+import yfinance as yf
+import pandas as pd
 
-# --- SERVEUR WEB POUR KEEP-ALIVE (RENDER) ---
+# --- SERVEUR WEB KEEP-ALIVE ---
 app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "CLTM Quant Engine [Rang S] est en ligne et actif !"
+    return "CLTM Quant Engine [Rang S] - Serveur Web & Analyse SMC Actifs !"
 
 def run_web_server():
     port = int(os.environ.get("PORT", 10000))
@@ -19,39 +22,81 @@ TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8836745281:AAEKRiN91gtatRC
 ADMIN_CHAT_ID = int(os.getenv("ADMIN_CHAT_ID", "6524605343"))
 
 bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
-
 BOT_ACTIVE = True
 
 def check_admin(message):
     return message.from_user.id == ADMIN_CHAT_ID
 
+# --- MODULE D'ANALYSE FINANCIÈRE (SMC & DXY) ---
+def get_market_analysis(symbol="EURUSD=X"):
+    try:
+        # Récupération des données financières
+        data = yf.download(tickers=symbol, period="5d", interval="1h", progress=False)
+        dxy_data = yf.download(tickers="DX-Y.NYB", period="5d", interval="1h", progress=False)
+
+        if data.empty:
+            return "⚠️ Impossible de récupérer les données de marché."
+
+        # Derniers prix
+        last_close = data['Close'].iloc[-1]
+        dxy_close = dxy_data['Close'].iloc[-1] if not dxy_data.empty else "N/A"
+
+        # Détection basique Fair Value Gap (FVG) sur la dernière bougie
+        high_prev2 = data['High'].iloc[-3]
+        low_current = data['Low'].iloc[-1]
+        
+        fvg_detected = "Aucun FVG détecté"
+        if low_current > high_prev2:
+            fvg_detected = "🚀 **FVG Haussier détecté !**"
+        elif data['High'].iloc[-1] < data['Low'].iloc[-3]:
+            fvg_detected = "📉 **FVG Baissier détecté !**"
+
+        report = (
+            f"📊 **ANALYSE DE MARCHÉ CLTM (SMC)**\n\n"
+            f"🔹 **Actif:** {symbol.replace('=X', '')}\n"
+            f"🔹 **Prix Actuel:** `{last_close:.5f}`\n"
+            f"💵 **Indice DXY:** `{dxy_close:.2f}`\n\n"
+            f"🔍 **Signal SMC:**\n{fvg_detected}\n\n"
+            f"⚡ *Moteur Quantitatif opérationnel.*"
+        )
+        return report
+    except Exception as e:
+        return f"❌ Erreur lors de l'analyse : {str(e)}"
+
+# --- COMMANDES TELEGRAM ---
 @bot.message_handler(commands=['start'])
 def handle_start(message):
     if not check_admin(message):
         return
     global BOT_ACTIVE
     BOT_ACTIVE = True
-    bot.reply_to(message, "🚀 **CLTM Quant Engine [Rang S] Activé**\n\nLe moteur d'analyse SMC/DXY et la gestion du risque sont opérationnels 24h/24.")
+    bot.reply_to(message, "🚀 **CLTM Quant Engine [Rang S] Activé**\n\nUtilise la commande /analyse pour scanner le marché.")
 
 @bot.message_handler(commands=['status'])
 def handle_status(message):
     if not check_admin(message):
         return
     status_text = "🟢 ACTIF" if BOT_ACTIVE else "🔴 INACTIF"
-    bot.reply_to(message, f"📊 **Statut CLTM Quant Engine**\n\n- État: {status_text}\n- Serveur Web: En ligne\n- Modèle: Rang S")
+    bot.reply_to(message, f"📊 **Statut CLTM Quant Engine**\n\n- État: {status_text}\n- Serveur Web: En ligne\n- Analyseur SMC: Prêt")
+
+@bot.message_handler(commands=['analyse'])
+def handle_analyse(message):
+    if not check_admin(message):
+        return
+    bot.reply_to(message, "⏳ Analyse des flux SMC & DXY en cours...")
+    report = get_market_analysis("EURUSD=X")
+    bot.send_message(ADMIN_CHAT_ID, report, parse_mode="Markdown")
 
 def run_trading_engine():
-    print("CLTM Quant Engine démarré sur Render...")
+    print("CLTM Quant Engine démarré...")
     try:
-        bot.send_message(ADMIN_CHAT_ID, "🖥️ **Serveur Cloud Render connecté !**\nKeep-Alive Web + Telegram actifs.")
+        bot.send_message(ADMIN_CHAT_ID, "🖥️ **Système prêt !**\nTape /analyse dans le tchat pour générer un rapport SMC/DXY.")
     except Exception as e:
-        print(f"Erreur d'envoi Telegram: {e}")
+        print(f"Erreur Telegram: {e}")
 
     bot.polling(non_stop=True, interval=2)
 
 if __name__ == "__main__":
-    # Lancement du serveur Web dans un thread séparé
     threading.Thread(target=run_web_server, daemon=True).start()
-    # Lancement du bot Telegram
     run_trading_engine()
     

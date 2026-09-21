@@ -34,16 +34,19 @@ def get_market_analysis(symbol="EURUSD=X"):
         if data.empty:
             return "⚠️ Impossible de récupérer les données de marché."
 
-        last_close = float(data['Close'].iloc[-1])
-        dxy_close = float(dxy_data['Close'].iloc[-1]) if not dxy_data.empty else "N/A"
+        # Extraire les valeurs uniques scalaires
+        last_close = float(data['Close'].iloc[-1].item() if hasattr(data['Close'].iloc[-1], 'item') else data['Close'].iloc[-1])
+        dxy_close = float(dxy_data['Close'].iloc[-1].item() if hasattr(dxy_data['Close'].iloc[-1], 'item') else dxy_data['Close'].iloc[-1]) if not dxy_data.empty else 0.0
 
-        high_prev2 = float(data['High'].iloc[-3])
-        low_current = float(data['Low'].iloc[-1])
-        
+        high_prev2 = float(data['High'].iloc[-3].item() if hasattr(data['High'].iloc[-3], 'item') else data['High'].iloc[-3])
+        low_current = float(data['Low'].iloc[-1].item() if hasattr(data['Low'].iloc[-1], 'item') else data['Low'].iloc[-1])
+        high_current = float(data['High'].iloc[-1].item() if hasattr(data['High'].iloc[-1], 'item') else data['High'].iloc[-1])
+        low_prev2 = float(data['Low'].iloc[-3].item() if hasattr(data['Low'].iloc[-3], 'item') else data['Low'].iloc[-3])
+
         fvg_detected = "Aucun FVG détecté"
         if low_current > high_prev2:
             fvg_detected = "🚀 **FVG Haussier détecté !**"
-        elif float(data['High'].iloc[-1]) < float(data['Low'].iloc[-3]):
+        elif high_current < low_prev2:
             fvg_detected = "📉 **FVG Baissier détecté !**"
 
         report = (

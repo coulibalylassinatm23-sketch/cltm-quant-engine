@@ -1,4 +1,6 @@
 pyTelegramBotAPI
-yfinance
-flask
 metaapi-cloud-sdk
+Flask
+yfinance
+pandas
+requests

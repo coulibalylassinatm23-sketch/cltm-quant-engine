@@ -22,14 +22,12 @@ TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 METAAPI_TOKEN = os.getenv('METAAPI_TOKEN')
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN) if TELEGRAM_TOKEN else None
-api = MetaApi(token=METAAPI_TOKEN) if METAAPI_TOKEN else None
 
 # ---------------------------------------------------------
-# 2. PARAMÈTRES RANG S (PARAMÉTRAGE INSTITUTIONNEL)
+# 2. PARAMÈTRES RANG S
 # ---------------------------------------------------------
 RISK_PER_TRADE_PCT = 1.0       # Risque strict de 1% du capital
 MAX_CONSECUTIVE_LOSSES = 5     # Verrou de sécurité à 5 pertes d'affilée
-BREAK_EVEN_RATIO = 1.0         # Passage à BE dès 1R de profit
 
 bot_state = {
     "trading_active": True,
@@ -75,7 +73,6 @@ def analyze_institutional_setup(symbol):
         signal = "NEUTRE"
         sl, tp1, tp2 = 0.0, 0.0, 0.0
 
-        # Regle Institutionnelle : Achat EUR/USD seulement si DXY baisse
         if fvg_bullish and dxy_trend == "BAISSIER":
             signal = "BUY"
             sl = df['Low'].iloc[-2]
@@ -126,13 +123,13 @@ if bot:
 
     @bot.message_handler(commands=['status'])
     def send_status(message):
-        meta_status = "🟢 Connecté" if METAAPI_TOKEN else "🔴 Non configuré"
+        meta_status = "🟢 Configuré" if METAAPI_TOKEN else "🔴 Non configuré"
         trade_status = "🟢 ACTIF" if bot_state["trading_active"] else "🔴 SUSPENDU"
         
         status_msg = (
             "📊 **Bilan Technologique Moteur v6.0**\n\n"
             f"• État Général: {trade_status}\n"
-            f"• Passerelle MetaAPI MT5: {meta_status}\n"
+            f"• Jeton MetaAPI: {meta_status}\n"
             f"• Protection Capital (SL): 1.0% fixe/trade\n"
             f"• Circuit Breaker: 5 Pertes max ({bot_state['consecutive_losses']}/5)\n"
             "• Filtre Correlation DXY: En ligne"
@@ -145,7 +142,7 @@ if bot:
             bot.send_message(message.chat.id, "⚠️ **Système Verrouillé.** Sécurité activée.")
             return
 
-        bot.send_message(message.chat.id, "⚡ *Analyse Quantitatives & Filtrage Macro en cours...*", parse_mode="Markdown")
+        bot.send_message(message.chat.id, "⚡ *Analyse Quantitative & Filtrage Macro en cours...*", parse_mode="Markdown")
         assets = ["EURUSD=X", "GBPUSD=X", "GC=F", "BTC-USD"]
         asset_names = {"EURUSD=X": "EUR/USD", "GBPUSD=X": "GBP/USD", "GC=F": "OR (XAUUSD)", "BTC-USD": "BITCOIN"}
 

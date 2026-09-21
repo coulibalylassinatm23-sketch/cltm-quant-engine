@@ -114,7 +114,6 @@ def process_account_steps(message):
         bot.send_message(chat_id, "⏳ **Déploiement du compte sur MetaAPI en cours...**", parse_mode="Markdown")
 
         try:
-            # Exécution dans une boucle d'événements dédiée
             account = asyncio.run(create_metaapi_account_async(state))
 
             bot.send_message(
@@ -135,24 +134,26 @@ def process_account_steps(message):
 
         del user_states[chat_id]
 
-# --- LANCEMENT DU SERVEUR FLASK ET DU BOT ---
+# --- DÉMARRAGE DU SERVEUR ET DU BOT ---
 
 def run_flask():
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port, use_reloader=False)
 
+def run_bot():
+    logging.info("Lancement du bot Telegram...")
+    try:
+        bot.remove_webhook()
+        bot.polling(non_stop=True, interval=1, timeout=20)
+    except Exception as e:
+        logging.error(f"Erreur bot Telegram: {e}")
+
 if __name__ == "__main__":
-    # Lancement de Flask dans un thread séparé pour le health check de Render
+    # Démarrage du serveur web Flask dans un thread secondaire
     flask_thread = threading.Thread(target=run_flask)
     flask_thread.daemon = True
     flask_thread.start()
 
-    # Démarrage du bot Telegram
-    logging.info("Lancement du bot Telegram...")
-    try:
-        # Nettoyage du webhook et des messages en attente
-        bot.remove_webhook(drop_pending_updates=True)
-        bot.infinity_polling(timeout=30, long_polling_timeout=5)
-    except Exception as e:
-        logging.critical(f"Erreur fatale bot: {e}")
+    # Démarrage du bot Telegram sur le thread principal
+    run_bot()
     

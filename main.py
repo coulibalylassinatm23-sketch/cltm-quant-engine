@@ -1,10 +1,25 @@
 import os
+import threading
+from flask import Flask
 import telebot
 from telebot import types
 import yfinance as yf
 
 # ---------------------------------------------------------
-# 1. INITIALIZATION
+# 1. MINI SERVEUR FLASK (Pour satisfaire les ports Render)
+# ---------------------------------------------------------
+app = Flask(__name__)
+
+@app.route('/')
+def health_check():
+    return "Bot Rang S is live!", 200
+
+def run_flask():
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
+
+# ---------------------------------------------------------
+# 2. INITIALIZATION TELEGRAM
 # ---------------------------------------------------------
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 METAAPI_TOKEN = os.getenv('METAAPI_TOKEN')
@@ -14,17 +29,16 @@ if not TELEGRAM_TOKEN:
 
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
 
-# Nettoyage automatique d'un éventuel webhook résiduel
 try:
     bot.remove_webhook()
 except Exception as e:
     print(f"Webhook remove log: {e}")
 
 # ---------------------------------------------------------
-# 2. PARAMÈTRES ET ÉTAT MOTEUR RANG S v6.0
+# 3. PARAMÈTRES ET ÉTAT MOTEUR RANG S v6.0
 # ---------------------------------------------------------
-RISK_PER_TRADE_PCT = 1.0       # 1% de risque fixe par position
-MAX_CONSECUTIVE_LOSSES = 5     # Verrou de sécurité à 5 pertes consécutives
+RISK_PER_TRADE_PCT = 1.0
+MAX_CONSECUTIVE_LOSSES = 5
 
 bot_state = {
     "trading_active": True,
@@ -32,10 +46,9 @@ bot_state = {
 }
 
 # ---------------------------------------------------------
-# 3. FILTRE MACRO-ÉCONOMIQUE (DXY)
+# 4. FILTRE MACRO-ÉCONOMIQUE (DXY)
 # ---------------------------------------------------------
 def check_macro_dxy_trend():
-    """Analyse la tendance du Dollar US (DXY)."""
     try:
         dxy = yf.Ticker("DX-Y.NYB")
         df = dxy.history(period="2d", interval="1h")
@@ -49,7 +62,7 @@ def check_macro_dxy_trend():
         return "NEUTRE"
 
 # ---------------------------------------------------------
-# 4. ANALYSE STRUCTURELLE SMC & FILTRAGE AVANCÉ
+# 5. ANALYSE STRUCTURELLE SMC & FILTRAGE AVANCÉ
 # ---------------------------------------------------------
 def analyze_institutional_setup(symbol):
     try:
@@ -94,7 +107,7 @@ def analyze_institutional_setup(symbol):
         return None
 
 # ---------------------------------------------------------
-# 5. COMMANDES TELEGRAM
+# 6. COMMANDES TELEGRAM
 # ---------------------------------------------------------
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
@@ -162,9 +175,14 @@ def kill_switch(message):
     bot.send_message(message.chat.id, "🛑 **ARRET D'URGENCE ACTIVÉ.** Moteur de trading stoppé.")
 
 # ---------------------------------------------------------
-# 6. EXÉCUTION DU POLLING
+# 7. EXÉCUTION DUAL THREAD (FLASK + TELEGRAM)
 # ---------------------------------------------------------
 if __name__ == "__main__":
+    # Démarrage de Flask dans un thread séparé
+    flask_thread = threading.Thread(target=run_flask)
+    flask_thread.daemon = True
+    flask_thread.start()
+
     print("Démarrage du bot Telegram Rang S...")
     bot.infinity_polling(timeout=20, long_polling_timeout=10)
-    
+        

@@ -150,8 +150,9 @@ if __name__ == "__main__":
     # Démarrage du bot Telegram
     logging.info("Lancement du bot Telegram...")
     try:
-        bot.remove_webhook()
-        bot.infinity_polling(drop_pending_updates=True, timeout=30, long_polling_timeout=5)
+        # Nettoyage du webhook et des messages en attente
+        bot.remove_webhook(drop_pending_updates=True)
+        bot.infinity_polling(timeout=30, long_polling_timeout=5)
     except Exception as e:
         logging.critical(f"Erreur fatale bot: {e}")
-        
+    

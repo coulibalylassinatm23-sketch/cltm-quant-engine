@@ -1,8 +1,8 @@
 import os
 import threading
-import time
 from flask import Flask
 import telebot
+from telebot import types
 import yfinance as yf
 
 # --- SERVEUR WEB KEEP-ALIVE ---
@@ -10,7 +10,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "CLTM Quant Engine [Rang S] - Moteur Actuariel & Multi-Comptes Opérationnel !"
+    return "CLTM Quant Engine [Rang S] - Interface & Menu Actifs !"
 
 def run_web_server():
     port = int(os.environ.get("PORT", 10000))
@@ -23,35 +23,34 @@ ADMIN_CHAT_ID = int(os.getenv("ADMIN_CHAT_ID", "6524605343"))
 bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
 BOT_ACTIVE = True
 
-# --- BASE DE DONNÉES EN MÉMOIRE (MULTI-COMPTES TRADING) ---
-# Format: {"account_id": {"login": "12345", "password": "...", "server": "Broker-Demo", "active": True}}
+# --- ENREGISTREMENT DES COMMANDES DANS LE MENU TELEGRAM ---
+try:
+    bot.set_my_commands([
+        telebot.types.BotCommand("start", "🚀 Afficher le panneau de contrôle"),
+        telebot.types.BotCommand("analyse", "📊 Scan de marché multi-actifs"),
+        telebot.types.BotCommand("accounts", "📋 Liste des comptes MT5"),
+        telebot.types.BotCommand("toggle", "⚙️ Activer/Désactiver le bot"),
+        telebot.types.BotCommand("status", "🟢 État du système")
+    ])
+except Exception as e:
+    print(f"Erreur de configuration des commandes: {e}")
+
+# --- BASE DE DONNÉES EN MÉMOIRE ---
 TRADING_ACCOUNTS = {}
 
 def check_admin(message):
     return message.from_user.id == ADMIN_CHAT_ID
 
-# --- MODULE ACTUARIEL : CALCUL DE LOT ADAPTATIF & AUTONOME ---
-def calculate_actuarial_lot(capital, risk_percent, sl_pips, asset_type="FOREX"):
-    """
-    Algorithme de dimensionnement de position adaptatif.
-    Calcule la taille exacte du lot en fonction du capital disponible,
-    de la tolérance au risque et de la volatilité de l'actif.
-    """
-    if capital <= 0 or sl_pips <= 0:
-        return 0.01
-
-    max_loss_cash = capital * (risk_percent / 100.0)
-
-    if asset_type == "BTC":
-        lot = max_loss_cash / (sl_pips * 1.0)
-    elif asset_type == "XAU":
-        lot = max_loss_cash / (sl_pips * 10.0)
-    else:  # Forex par défaut
-        lot = max_loss_cash / (sl_pips * 10.0)
-
-    # Sécurité actuarielle : pas de lot nul, arrondi à 2 décimales
-    lot = max(0.01, round(lot, 2))
-    return lot
+# --- CRÉATION DU CLAVIER INTERACTIF (BOUTONS PERMANENTS) ---
+def get_main_keyboard():
+    markup = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
+    btn_analyse = types.KeyboardButton("📊 Analyse SMC")
+    btn_accounts = types.KeyboardButton("📋 Mes Comptes")
+    btn_status = types.KeyboardButton("🟢 Statut")
+    btn_toggle = types.KeyboardButton("⚙️ ON / OFF")
+    
+    markup.add(btn_analyse, btn_accounts, btn_status, btn_toggle)
+    return markup
 
 # --- ANALYSE INSTITUTIONNELLE SMC ---
 ASSETS = {
@@ -64,7 +63,6 @@ ASSETS = {
 def analyze_market_smc():
     report = "🏛️ **CLTM QUANT ENGINE [RANG S] - DASHBOARD**\n\n"
     
-    # Check DXY
     try:
         dxy = yf.download(tickers="DX-Y.NYB", period="5d", interval="1h", progress=False)
         dxy_price = float(dxy['Close'].iloc[-1].item() if hasattr(dxy['Close'].iloc[-1], 'item') else dxy['Close'].iloc[-1])
@@ -97,19 +95,18 @@ def analyze_market_smc():
 
     return report
 
-# --- COMMANDES TELEGRAM & INTERFACE UTILISATEUR ---
+# --- COMMANDES ET GESTIONNAIRE DES BOUTONS ---
 @bot.message_handler(commands=['start'])
 def handle_start(message):
     if not check_admin(message):
         return
-    bot.reply_to(message, 
-                 "🧠 **CLTM Quant Engine [Rang S] - Système Prêt**\n\n"
-                 "📌 **Commandes Principales :**\n"
-                 "• `/analyse` : Diagnostic SMC & Corrélation DXY\n"
-                 "• `/add_account <Login> <Pass> <Serveur>` : Connecter un compte MT5\n"
-                 "• `/accounts` : Liste des comptes connectés\n"
-                 "• `/toggle` : Activer/Désactiver le trading automatique\n"
-                 "• `/status` : État du moteur actuariel", parse_mode="Markdown")
+    bot.send_message(
+        ADMIN_CHAT_ID,
+        "🧠 **CLTM Quant Engine [Rang S] - Terminal Prêt**\n\n"
+        "Utilise les boutons ci-dessous pour interagir instantanément avec le système.",
+        reply_markup=get_main_keyboard(),
+        parse_mode="Markdown"
+    )
 
 @bot.message_handler(commands=['analyse'])
 def handle_analyse(message):
@@ -117,7 +114,7 @@ def handle_analyse(message):
         return
     bot.reply_to(message, "⏳ Analyse quantitativiste en cours...")
     report = analyze_market_smc()
-    bot.send_message(ADMIN_CHAT_ID, report, parse_mode="Markdown")
+    bot.send_message(ADMIN_CHAT_ID, report, parse_mode="Markdown", reply_markup=get_main_keyboard())
 
 @bot.message_handler(commands=['toggle'])
 def handle_toggle(message):
@@ -126,7 +123,7 @@ def handle_toggle(message):
     global BOT_ACTIVE
     BOT_ACTIVE = not BOT_ACTIVE
     state = "🟢 ACTIF (Trading Autonome)" if BOT_ACTIVE else "🔴 EN PAUSE (Mode Observation)"
-    bot.reply_to(message, f"⚙️ **Statut du Bot :** {state}")
+    bot.reply_to(message, f"⚙️ **Statut du Bot :** {state}", reply_markup=get_main_keyboard())
 
 @bot.message_handler(commands=['add_account'])
 def handle_add_account(message):
@@ -145,7 +142,7 @@ def handle_add_account(message):
             "status": "Connecté (En attente d'ordres)"
         }
         
-        bot.reply_to(message, f"✅ **Compte MT5 Enregistré !**\n\n🆔 **Login:** `{acc_login}`\n🌐 **Serveur:** `{acc_server}`\n⚡ **Risk Management Actuariel:** Actif sur ce compte.", parse_mode="Markdown")
+        bot.reply_to(message, f"✅ **Compte MT5 Enregistré !**\n\n🆔 **Login:** `{acc_login}`\n🌐 **Serveur:** `{acc_server}`\n⚡ **Risk Management Actuariel:** Actif.", parse_mode="Markdown", reply_markup=get_main_keyboard())
     except Exception as e:
         bot.reply_to(message, f"❌ Erreur lors de l'ajout du compte : {str(e)}")
 
@@ -154,25 +151,42 @@ def handle_accounts(message):
     if not check_admin(message):
         return
     if not TRADING_ACCOUNTS:
-        bot.reply_to(message, "📂 **Aucun compte de trading connecté.**\nUtilise `/add_account` pour en ajouter un.")
+        bot.reply_to(message, "📂 **Aucun compte de trading connecté.**\nUtilise `/add_account <Login> <Pass> <Serveur>` pour en ajouter un.", reply_markup=get_main_keyboard())
         return
     
     res = "📋 **COMPTES DE TRADING CONNECTÉS :**\n\n"
     for login, info in TRADING_ACCOUNTS.items():
         res += f"🔹 **ID:** `{login}` | **Serveur:** `{info['server']}` | **Statut:** {info['status']}\n"
-    bot.reply_to(message, res, parse_mode="Markdown")
+    bot.reply_to(message, res, parse_mode="Markdown", reply_markup=get_main_keyboard())
 
 @bot.message_handler(commands=['status'])
 def handle_status(message):
     if not check_admin(message):
         return
     status_text = "🟢 ACTIF" if BOT_ACTIVE else "🔴 EN PAUSE"
-    bot.reply_to(message, f"📊 **Statut CLTM Quant Engine**\n\n- État Trading: {status_text}\n- Moteur Actuariel: En ligne\n- Comptes rattachés: {len(TRADING_ACCOUNTS)}")
+    bot.reply_to(message, f"📊 **Statut CLTM Quant Engine**\n\n- État Trading: {status_text}\n- Moteur Actuariel: En ligne\n- Comptes rattachés: {len(TRADING_ACCOUNTS)}", reply_markup=get_main_keyboard())
+
+# --- CAPTURE DES CLICS SUR LES BOUTONS DU CLAVIER ---
+@bot.message_handler(func=lambda message: True)
+def handle_text_buttons(message):
+    if not check_admin(message):
+        return
+    
+    text = message.text
+    if text == "📊 Analyse SMC":
+        handle_analyse(message)
+    elif text == "📋 Mes Comptes":
+        handle_accounts(message)
+    elif text == "🟢 Statut":
+        handle_status(message)
+    elif text == "⚙️ ON / OFF":
+        handle_toggle(message)
 
 def run_trading_engine():
-    print("CLTM Quant Engine v3.0 démarré...")
+    print("CLTM Quant Engine v3.1 démarré...")
     bot.polling(non_stop=True, interval=2)
 
 if __name__ == "__main__":
     threading.Thread(target=run_web_server, daemon=True).start()
     run_trading_engine()
+            

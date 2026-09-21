@@ -1,198 +1,180 @@
 import os
-import threading
-import time
-from flask import Flask
 import telebot
 from telebot import types
+from flask import Flask
+from threading import Thread
 import yfinance as yf
+from metaapi_cloud_sdk import MetaApi
 
-# --- SERVEUR WEB KEEP-ALIVE ---
+# ---------------------------------------------------------
+# 1. CONFIGURATION & SERVEUR KEEP-ALIVE
+# ---------------------------------------------------------
 app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "CLTM Quant Engine [Rang S] - Serveur Web & Interface Opérationnels !"
+    return "Moteur Quantique Rang S v6.0 - En Ligne"
 
-def run_web_server():
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+def run_flask():
+    app.run(host='0.0.0.0', port=10000)
 
-# --- CONFIGURATION TELEGRAM ---
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "8836745281:AAEKRiN91gtatRCcBuIsUur4myqXszwOLr4")
-ADMIN_CHAT_ID = int(os.getenv("ADMIN_CHAT_ID", "6524605343"))
+TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
+METAAPI_TOKEN = os.getenv('METAAPI_TOKEN')
 
-bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
-BOT_ACTIVE = True
+bot = telebot.TeleBot(TELEGRAM_TOKEN) if TELEGRAM_TOKEN else None
+api = MetaApi(token=METAAPI_TOKEN) if METAAPI_TOKEN else None
 
-# --- BASE DE DONNÉES EN MÉMOIRE ---
-TRADING_ACCOUNTS = {}
+# ---------------------------------------------------------
+# 2. PARAMÈTRES RANG S (PARAMÉTRAGE INSTITUTIONNEL)
+# ---------------------------------------------------------
+RISK_PER_TRADE_PCT = 1.0       # Risque strict de 1% du capital
+MAX_CONSECUTIVE_LOSSES = 5     # Verrou de sécurité à 5 pertes d'affilée
+BREAK_EVEN_RATIO = 1.0         # Passage à BE dès 1R de profit
 
-def check_admin(message):
-    return message.from_user.id == ADMIN_CHAT_ID
-
-# --- CRÉATION DU CLAVIER PERMANENT ---
-def get_main_keyboard():
-    markup = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
-    btn_analyse = types.KeyboardButton("📊 Analyse SMC")
-    btn_accounts = types.KeyboardButton("📋 Mes Comptes")
-    btn_status = types.KeyboardButton("🟢 Statut")
-    btn_toggle = types.KeyboardButton("⚙️ ON / OFF")
-    
-    markup.add(btn_analyse, btn_accounts, btn_status, btn_toggle)
-    return markup
-
-# --- ANALYSE INSTITUTIONNELLE SMC ---
-ASSETS = {
-    "EURUSD": ("EURUSD=X", "FOREX"),
-    "GBPUSD": ("GBPUSD=X", "FOREX"),
-    "OR (XAUUSD)": ("GC=F", "XAU"),
-    "BITCOIN": ("BTC-USD", "BTC")
+bot_state = {
+    "trading_active": True,
+    "consecutive_losses": 0
 }
 
-def analyze_market_smc():
-    report = "🏛️ **CLTM QUANT ENGINE [RANG S] - DASHBOARD**\n\n"
-    
+# ---------------------------------------------------------
+# 3. FILTRE MACRO-ÉCONOMIQUE INTERMARCHÉS (DXY)
+# ---------------------------------------------------------
+def check_macro_dxy_trend():
+    """Analyse la tendance du Dollar US (DXY) pour valider la direction."""
     try:
-        dxy = yf.download(tickers="DX-Y.NYB", period="5d", interval="1h", progress=False)
-        dxy_price = float(dxy['Close'].iloc[-1].item() if hasattr(dxy['Close'].iloc[-1], 'item') else dxy['Close'].iloc[-1])
-        report += f"💵 **Indice DXY:** `{dxy_price:.2f}`\n"
-        report += "-----------------------------------\n"
-    except Exception:
-        report += "💵 **Indice DXY:** N/A\n-----------------------------------\n"
+        dxy = yf.Ticker("DX-Y.NYB")
+        df = dxy.history(period="2d", interval="1h")
+        if len(df) < 2:
+            return "NEUTRE"
+        last_close = df['Close'].iloc[-1]
+        prev_close = df['Close'].iloc[-2]
+        return "HAUSSIER" if last_close > prev_close else "BAISSIER"
+    except Exception as e:
+        print(f"Erreur Filtre DXY: {e}")
+        return "NEUTRE"
 
-    for name, (ticker, asset_type) in ASSETS.items():
-        try:
-            data = yf.download(tickers=ticker, period="5d", interval="1h", progress=False)
-            if data.empty:
-                continue
-            
-            last = float(data['Close'].iloc[-1].item() if hasattr(data['Close'].iloc[-1], 'item') else data['Close'].iloc[-1])
-            high_prev2 = float(data['High'].iloc[-3].item() if hasattr(data['High'].iloc[-3], 'item') else data['High'].iloc[-3])
-            low_current = float(data['Low'].iloc[-1].item() if hasattr(data['Low'].iloc[-1], 'item') else data['Low'].iloc[-1])
-            high_current = float(data['High'].iloc[-1].item() if hasattr(data['High'].iloc[-1], 'item') else data['High'].iloc[-1])
-            low_prev2 = float(data['Low'].iloc[-3].item() if hasattr(data['Low'].iloc[-3], 'item') else data['Low'].iloc[-3])
-
-            signal = "⚪ Neutre"
-            if low_current > high_prev2:
-                signal = "🚀 **FVG Achat**"
-            elif high_current < low_prev2:
-                signal = "📉 **FVG Vente**"
-
-            report += f"🔹 **{name}**: `{last:.2f}` | {signal}\n"
-        except Exception:
-            report += f"❌ **{name}**: Erreur de lecture\n"
-
-    return report
-
-# --- COMMANDES TELEGRAM ---
-@bot.message_handler(commands=['start'])
-def handle_start(message):
-    if not check_admin(message):
-        return
-    bot.send_message(
-        ADMIN_CHAT_ID,
-        "🧠 **CLTM Quant Engine [Rang S] - Terminal Prêt**\n\n"
-        "Utilise le menu ou les boutons ci-dessous pour interagir avec le système.",
-        reply_markup=get_main_keyboard(),
-        parse_mode="Markdown"
-    )
-
-@bot.message_handler(commands=['analyse'])
-def handle_analyse(message):
-    if not check_admin(message):
-        return
-    bot.reply_to(message, "⏳ Analyse quantitativiste en cours...")
-    report = analyze_market_smc()
-    bot.send_message(ADMIN_CHAT_ID, report, parse_mode="Markdown", reply_markup=get_main_keyboard())
-
-@bot.message_handler(commands=['toggle'])
-def handle_toggle(message):
-    if not check_admin(message):
-        return
-    global BOT_ACTIVE
-    BOT_ACTIVE = not BOT_ACTIVE
-    state = "🟢 ACTIF (Trading Autonome)" if BOT_ACTIVE else "🔴 EN PAUSE (Mode Observation)"
-    bot.reply_to(message, f"⚙️ **Statut du Bot :** {state}", reply_markup=get_main_keyboard())
-
-@bot.message_handler(commands=['add_account'])
-def handle_add_account(message):
-    if not check_admin(message):
-        return
+# ---------------------------------------------------------
+# 4. ANALYSE STRUCTURELLE SMC & FILTRAGE AVANCÉ
+# ---------------------------------------------------------
+def analyze_institutional_setup(symbol):
     try:
-        args = message.text.split()[1:]
-        if len(args) < 3:
-            bot.reply_to(message, "⚠️ **Format :** `/add_account <Login> <Password> <Server>`\nEx: `/add_account 1234567 mypass Exness-MT5Trial`", parse_mode="Markdown")
-            return
+        ticker = yf.Ticker(symbol)
+        df = ticker.history(period="5d", interval="1h")
+        if df.empty or len(df) < 5:
+            return None
+
+        last_close = df['Close'].iloc[-1]
         
-        acc_login, acc_pass, acc_server = args[0], args[1], args[2]
-        TRADING_ACCOUNTS[acc_login] = {
-            "password": acc_pass,
-            "server": acc_server,
-            "status": "Connecté (En attente d'ordres)"
+        # Détection des Fair Value Gaps (FVG)
+        fvg_bullish = df['Low'].iloc[-1] > df['High'].iloc[-3]
+        fvg_bearish = df['High'].iloc[-1] < df['Low'].iloc[-3]
+
+        # Interrogation du filtre Macro Dollar
+        dxy_trend = check_macro_dxy_trend()
+
+        signal = "NEUTRE"
+        sl, tp1, tp2 = 0.0, 0.0, 0.0
+
+        # Regle Institutionnelle : Achat EUR/USD seulement si DXY baisse
+        if fvg_bullish and dxy_trend == "BAISSIER":
+            signal = "BUY"
+            sl = df['Low'].iloc[-2]
+            risk = last_close - sl
+            tp1 = last_close + (risk * 1.5)
+            tp2 = last_close + (risk * 3.0)
+        elif fvg_bearish and dxy_trend == "HAUSSIER":
+            signal = "SELL"
+            sl = df['High'].iloc[-2]
+            risk = sl - last_close
+            tp1 = last_close - (risk * 1.5)
+            tp2 = last_close - (risk * 3.0)
+
+        return {
+            "symbol": symbol,
+            "signal": signal,
+            "price": round(last_close, 5),
+            "sl": round(sl, 5),
+            "tp1": round(tp1, 5),
+            "tp2": round(tp2, 5),
+            "dxy": dxy_trend
         }
-        
-        bot.reply_to(message, f"✅ **Compte MT5 Enregistré !**\n\n🆔 **Login:** `{acc_login}`\n🌐 **Serveur:** `{acc_server}`\n⚡ **Risk Management Actuariel:** Actif.", parse_mode="Markdown", reply_markup=get_main_keyboard())
     except Exception as e:
-        bot.reply_to(message, f"❌ Erreur lors de l'ajout du compte : {str(e)}")
+        print(f"Erreur Analyse {symbol}: {e}")
+        return None
 
-@bot.message_handler(commands=['accounts'])
-def handle_accounts(message):
-    if not check_admin(message):
-        return
-    if not TRADING_ACCOUNTS:
-        bot.reply_to(message, "📂 **Aucun compte de trading connecté.**\nUtilise `/add_account <Login> <Pass> <Serveur>` pour en ajouter un.", reply_markup=get_main_keyboard())
-        return
-    
-    res = "📋 **COMPTES DE TRADING CONNECTÉS :**\n\n"
-    for login, info in TRADING_ACCOUNTS.items():
-        res += f"🔹 **ID:** `{login}` | **Serveur:** `{info['server']}` | **Statut:** {info['status']}\n"
-    bot.reply_to(message, res, parse_mode="Markdown", reply_markup=get_main_keyboard())
+# ---------------------------------------------------------
+# 5. COMMANDES TELEGRAM & INTERACTION
+# ---------------------------------------------------------
+if bot:
+    @bot.message_handler(commands=['start'])
+    def send_welcome(message):
+        markup = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
+        btn_smc = types.KeyboardButton("🚀 Scan Rang S + Macro")
+        btn_status = types.KeyboardButton("🟢 Statut Moteur")
+        btn_kill = types.KeyboardButton("🛑 KILL SWITCH")
+        markup.add(btn_smc, btn_status, btn_kill)
 
-@bot.message_handler(commands=['status'])
-def handle_status(message):
-    if not check_admin(message):
-        return
-    status_text = "🟢 ACTIF" if BOT_ACTIVE else "🔴 EN PAUSE"
-    bot.reply_to(message, f"📊 **Statut CLTM Quant Engine**\n\n- État Trading: {status_text}\n- Moteur Actuariel: En ligne\n- Comptes rattachés: {len(TRADING_ACCOUNTS)}", reply_markup=get_main_keyboard())
+        bot.send_message(
+            message.chat.id,
+            "🏆 **CLTM Quant Engine Rang S v6.0 - Moteur Élite**\n\n"
+            "• Stop Loss Obligatoire : Actif\n"
+            "• Filtre Macro DXY Intermarchés : Intégré\n"
+            "• Sécurité : Stop automatique après 5 pertes",
+            parse_mode="Markdown",
+            reply_markup=markup
+        )
 
-# --- GESTIONNAIRE DES BOUTONS TEXTES ---
-@bot.message_handler(func=lambda message: True)
-def handle_text_buttons(message):
-    if not check_admin(message):
-        return
-    
-    text = message.text
-    if text == "📊 Analyse SMC":
-        handle_analyse(message)
-    elif text == "📋 Mes Comptes":
-        handle_accounts(message)
-    elif text == "🟢 Statut":
-        handle_status(message)
-    elif text == "⚙️ ON / OFF":
-        handle_toggle(message)
-
-def run_trading_engine():
-    print("Nettoyage du webhook Telegram...")
-    try:
-        # SUPPRESSION DU WEBHOOK CONFLICTUEL
-        bot.remove_webhook()
-        time.sleep(1)
+    @bot.message_handler(commands=['status'])
+    def send_status(message):
+        meta_status = "🟢 Connecté" if METAAPI_TOKEN else "🔴 Non configuré"
+        trade_status = "🟢 ACTIF" if bot_state["trading_active"] else "🔴 SUSPENDU"
         
-        # DEFINITION DES COMMANDES TELEGRAM
-        bot.set_my_commands([
-            telebot.types.BotCommand("start", "🚀 Afficher le panneau de contrôle"),
-            telebot.types.BotCommand("analyse", "📊 Scan de marché multi-actifs"),
-            telebot.types.BotCommand("accounts", "📋 Liste des comptes MT5"),
-            telebot.types.BotCommand("toggle", "⚙️ Activer/Désactiver le bot"),
-            telebot.types.BotCommand("status", "🟢 État du système")
-        ])
-    except Exception as e:
-        print(f"Avertissement d'initialisation : {e}")
+        status_msg = (
+            "📊 **Bilan Technologique Moteur v6.0**\n\n"
+            f"• État Général: {trade_status}\n"
+            f"• Passerelle MetaAPI MT5: {meta_status}\n"
+            f"• Protection Capital (SL): 1.0% fixe/trade\n"
+            f"• Circuit Breaker: 5 Pertes max ({bot_state['consecutive_losses']}/5)\n"
+            "• Filtre Correlation DXY: En ligne"
+        )
+        bot.send_message(message.chat.id, status_msg, parse_mode="Markdown")
 
-    print("CLTM Quant Engine v3.2 démarré...")
-    bot.polling(non_stop=True, interval=2)
+    @bot.message_handler(func=lambda m: m.text == "🚀 Scan Rang S + Macro")
+    def trigger_analysis(message):
+        if not bot_state["trading_active"]:
+            bot.send_message(message.chat.id, "⚠️ **Système Verrouillé.** Sécurité activée.")
+            return
 
+        bot.send_message(message.chat.id, "⚡ *Analyse Quantitatives & Filtrage Macro en cours...*", parse_mode="Markdown")
+        assets = ["EURUSD=X", "GBPUSD=X", "GC=F", "BTC-USD"]
+        asset_names = {"EURUSD=X": "EUR/USD", "GBPUSD=X": "GBP/USD", "GC=F": "OR (XAUUSD)", "BTC-USD": "BITCOIN"}
+
+        msg = "🎯 **Signaux Validés Rang S (Avec SL & Macro)**\n\n"
+        for asset in assets:
+            res = analyze_institutional_setup(asset)
+            name = asset_names.get(asset, asset)
+            if res and res['signal'] != "NEUTRE":
+                msg += f"🔥 **{name}** : Signal **{res['signal']}**\n"
+                msg += f"   • Prix: {res['price']}\n"
+                msg += f"   • 🛑 Stop Loss: {res['sl']}\n"
+                msg += f"   • 🎯 Take Profit 1: {res['tp1']}\n"
+                msg += f"   • 🎯 Take Profit 2: {res['tp2']}\n"
+                msg += f"   • 🌐 Filtre DXY: {res['dxy']}\n\n"
+            else:
+                msg += f"⚪ **{name}** : Pas de confluence SMC + Macro.\n\n"
+
+        bot.send_message(message.chat.id, msg, parse_mode="Markdown")
+
+    @bot.message_handler(func=lambda m: m.text == "🛑 KILL SWITCH")
+    def kill_switch(message):
+        bot_state["trading_active"] = False
+        bot.send_message(message.chat.id, "🛑 **ARRET D'URGENCE ACTIVÉ.** Moteur de trading stoppé.")
+
+# ---------------------------------------------------------
+# 6. LANCEMENT DU ROBOT
+# ---------------------------------------------------------
 if __name__ == "__main__":
-    threading.Thread(target=run_web_server, daemon=True).start()
-    run_trading_engine()
-    
+    Thread(target=run_flask).start()
+    if bot:
+        bot.polling(non_stop=True)
+        

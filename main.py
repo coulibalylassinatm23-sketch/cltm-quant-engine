@@ -1,5 +1,6 @@
 import os
 import threading
+import time
 from flask import Flask
 import telebot
 from telebot import types
@@ -10,7 +11,7 @@ app = Flask(__name__)
 
 @app.route('/')
 def home():
-    return "CLTM Quant Engine [Rang S] - Interface & Menu Actifs !"
+    return "CLTM Quant Engine [Rang S] - Serveur Web & Interface Opérationnels !"
 
 def run_web_server():
     port = int(os.environ.get("PORT", 10000))
@@ -23,25 +24,13 @@ ADMIN_CHAT_ID = int(os.getenv("ADMIN_CHAT_ID", "6524605343"))
 bot = telebot.TeleBot(TELEGRAM_BOT_TOKEN)
 BOT_ACTIVE = True
 
-# --- ENREGISTREMENT DES COMMANDES DANS LE MENU TELEGRAM ---
-try:
-    bot.set_my_commands([
-        telebot.types.BotCommand("start", "🚀 Afficher le panneau de contrôle"),
-        telebot.types.BotCommand("analyse", "📊 Scan de marché multi-actifs"),
-        telebot.types.BotCommand("accounts", "📋 Liste des comptes MT5"),
-        telebot.types.BotCommand("toggle", "⚙️ Activer/Désactiver le bot"),
-        telebot.types.BotCommand("status", "🟢 État du système")
-    ])
-except Exception as e:
-    print(f"Erreur de configuration des commandes: {e}")
-
 # --- BASE DE DONNÉES EN MÉMOIRE ---
 TRADING_ACCOUNTS = {}
 
 def check_admin(message):
     return message.from_user.id == ADMIN_CHAT_ID
 
-# --- CRÉATION DU CLAVIER INTERACTIF (BOUTONS PERMANENTS) ---
+# --- CRÉATION DU CLAVIER PERMANENT ---
 def get_main_keyboard():
     markup = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
     btn_analyse = types.KeyboardButton("📊 Analyse SMC")
@@ -95,7 +84,7 @@ def analyze_market_smc():
 
     return report
 
-# --- COMMANDES ET GESTIONNAIRE DES BOUTONS ---
+# --- COMMANDES TELEGRAM ---
 @bot.message_handler(commands=['start'])
 def handle_start(message):
     if not check_admin(message):
@@ -103,7 +92,7 @@ def handle_start(message):
     bot.send_message(
         ADMIN_CHAT_ID,
         "🧠 **CLTM Quant Engine [Rang S] - Terminal Prêt**\n\n"
-        "Utilise les boutons ci-dessous pour interagir instantanément avec le système.",
+        "Utilise le menu ou les boutons ci-dessous pour interagir avec le système.",
         reply_markup=get_main_keyboard(),
         parse_mode="Markdown"
     )
@@ -166,7 +155,7 @@ def handle_status(message):
     status_text = "🟢 ACTIF" if BOT_ACTIVE else "🔴 EN PAUSE"
     bot.reply_to(message, f"📊 **Statut CLTM Quant Engine**\n\n- État Trading: {status_text}\n- Moteur Actuariel: En ligne\n- Comptes rattachés: {len(TRADING_ACCOUNTS)}", reply_markup=get_main_keyboard())
 
-# --- CAPTURE DES CLICS SUR LES BOUTONS DU CLAVIER ---
+# --- GESTIONNAIRE DES BOUTONS TEXTES ---
 @bot.message_handler(func=lambda message: True)
 def handle_text_buttons(message):
     if not check_admin(message):
@@ -183,10 +172,27 @@ def handle_text_buttons(message):
         handle_toggle(message)
 
 def run_trading_engine():
-    print("CLTM Quant Engine v3.1 démarré...")
+    print("Nettoyage du webhook Telegram...")
+    try:
+        # SUPPRESSION DU WEBHOOK CONFLICTUEL
+        bot.remove_webhook()
+        time.sleep(1)
+        
+        # DEFINITION DES COMMANDES TELEGRAM
+        bot.set_my_commands([
+            telebot.types.BotCommand("start", "🚀 Afficher le panneau de contrôle"),
+            telebot.types.BotCommand("analyse", "📊 Scan de marché multi-actifs"),
+            telebot.types.BotCommand("accounts", "📋 Liste des comptes MT5"),
+            telebot.types.BotCommand("toggle", "⚙️ Activer/Désactiver le bot"),
+            telebot.types.BotCommand("status", "🟢 État du système")
+        ])
+    except Exception as e:
+        print(f"Avertissement d'initialisation : {e}")
+
+    print("CLTM Quant Engine v3.2 démarré...")
     bot.polling(non_stop=True, interval=2)
 
 if __name__ == "__main__":
     threading.Thread(target=run_web_server, daemon=True).start()
     run_trading_engine()
-            
+    

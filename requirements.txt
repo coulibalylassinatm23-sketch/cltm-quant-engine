@@ -2,3 +2,6 @@ pyTelegramBotAPI
 requests
 urllib3
 flask
+yfinance
+pandas
+numpy

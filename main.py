@@ -1,33 +1,30 @@
 import os
 import telebot
 from telebot import types
-from flask import Flask
-from threading import Thread
 import yfinance as yf
-from metaapi_cloud_sdk import MetaApi
 
 # ---------------------------------------------------------
-# 1. CONFIGURATION & SERVEUR KEEP-ALIVE
+# 1. INITIALIZATION
 # ---------------------------------------------------------
-app = Flask(__name__)
-
-@app.route('/')
-def home():
-    return "Moteur Quantique Rang S v6.0 - En Ligne"
-
-def run_flask():
-    app.run(host='0.0.0.0', port=10000)
-
 TELEGRAM_TOKEN = os.getenv('TELEGRAM_TOKEN')
 METAAPI_TOKEN = os.getenv('METAAPI_TOKEN')
 
-bot = telebot.TeleBot(TELEGRAM_TOKEN) if TELEGRAM_TOKEN else None
+if not TELEGRAM_TOKEN:
+    raise ValueError("TELEGRAM_TOKEN manquant dans les variables d'environnement.")
+
+bot = telebot.TeleBot(TELEGRAM_TOKEN)
+
+# Nettoyage automatique d'un éventuel webhook résiduel
+try:
+    bot.remove_webhook()
+except Exception as e:
+    print(f"Webhook remove log: {e}")
 
 # ---------------------------------------------------------
-# 2. PARAMÈTRES RANG S
+# 2. PARAMÈTRES ET ÉTAT MOTEUR RANG S v6.0
 # ---------------------------------------------------------
-RISK_PER_TRADE_PCT = 1.0       # Risque strict de 1% du capital
-MAX_CONSECUTIVE_LOSSES = 5     # Verrou de sécurité à 5 pertes d'affilée
+RISK_PER_TRADE_PCT = 1.0       # 1% de risque fixe par position
+MAX_CONSECUTIVE_LOSSES = 5     # Verrou de sécurité à 5 pertes consécutives
 
 bot_state = {
     "trading_active": True,
@@ -35,10 +32,10 @@ bot_state = {
 }
 
 # ---------------------------------------------------------
-# 3. FILTRE MACRO-ÉCONOMIQUE INTERMARCHÉS (DXY)
+# 3. FILTRE MACRO-ÉCONOMIQUE (DXY)
 # ---------------------------------------------------------
 def check_macro_dxy_trend():
-    """Analyse la tendance du Dollar US (DXY) pour valider la direction."""
+    """Analyse la tendance du Dollar US (DXY)."""
     try:
         dxy = yf.Ticker("DX-Y.NYB")
         df = dxy.history(period="2d", interval="1h")
@@ -63,11 +60,8 @@ def analyze_institutional_setup(symbol):
 
         last_close = df['Close'].iloc[-1]
         
-        # Détection des Fair Value Gaps (FVG)
         fvg_bullish = df['Low'].iloc[-1] > df['High'].iloc[-3]
         fvg_bearish = df['High'].iloc[-1] < df['Low'].iloc[-3]
-
-        # Interrogation du filtre Macro Dollar
         dxy_trend = check_macro_dxy_trend()
 
         signal = "NEUTRE"
@@ -100,78 +94,77 @@ def analyze_institutional_setup(symbol):
         return None
 
 # ---------------------------------------------------------
-# 5. COMMANDES TELEGRAM & INTERACTION
+# 5. COMMANDES TELEGRAM
 # ---------------------------------------------------------
-if bot:
-    @bot.message_handler(commands=['start'])
-    def send_welcome(message):
-        markup = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
-        btn_smc = types.KeyboardButton("🚀 Scan Rang S + Macro")
-        btn_status = types.KeyboardButton("🟢 Statut Moteur")
-        btn_kill = types.KeyboardButton("🛑 KILL SWITCH")
-        markup.add(btn_smc, btn_status, btn_kill)
+@bot.message_handler(commands=['start'])
+def send_welcome(message):
+    markup = types.ReplyKeyboardMarkup(row_width=2, resize_keyboard=True)
+    btn_smc = types.KeyboardButton("🚀 Scan Rang S + Macro")
+    btn_status = types.KeyboardButton("🟢 Statut Moteur")
+    btn_kill = types.KeyboardButton("🛑 KILL SWITCH")
+    markup.add(btn_smc, btn_status, btn_kill)
 
-        bot.send_message(
-            message.chat.id,
-            "🏆 **CLTM Quant Engine Rang S v6.0 - Moteur Élite**\n\n"
-            "• Stop Loss Obligatoire : Actif\n"
-            "• Filtre Macro DXY Intermarchés : Intégré\n"
-            "• Sécurité : Stop automatique après 5 pertes",
-            parse_mode="Markdown",
-            reply_markup=markup
-        )
+    bot.send_message(
+        message.chat.id,
+        "🏆 **CLTM Quant Engine Rang S v6.0**\n\n"
+        "• Stop Loss Obligatoire : Actif\n"
+        "• Filtre Macro DXY Intermarchés : Intégré\n"
+        "• Sécurité : Stop après 5 pertes consécutives\n\n"
+        "Utilise le menu ci-dessous pour interagir.",
+        parse_mode="Markdown",
+        reply_markup=markup
+    )
 
-    @bot.message_handler(commands=['status'])
-    def send_status(message):
-        meta_status = "🟢 Configuré" if METAAPI_TOKEN else "🔴 Non configuré"
-        trade_status = "🟢 ACTIF" if bot_state["trading_active"] else "🔴 SUSPENDU"
-        
-        status_msg = (
-            "📊 **Bilan Technologique Moteur v6.0**\n\n"
-            f"• État Général: {trade_status}\n"
-            f"• Jeton MetaAPI: {meta_status}\n"
-            f"• Protection Capital (SL): 1.0% fixe/trade\n"
-            f"• Circuit Breaker: 5 Pertes max ({bot_state['consecutive_losses']}/5)\n"
-            "• Filtre Correlation DXY: En ligne"
-        )
-        bot.send_message(message.chat.id, status_msg, parse_mode="Markdown")
+@bot.message_handler(commands=['status'])
+def send_status(message):
+    meta_status = "🟢 Configuré" if METAAPI_TOKEN else "🔴 Non configuré"
+    trade_status = "🟢 ACTIF" if bot_state["trading_active"] else "🔴 SUSPENDU"
+    
+    status_msg = (
+        "📊 **Bilan Technologique Moteur v6.0**\n\n"
+        f"• État Général: {trade_status}\n"
+        f"• Jeton MetaAPI: {meta_status}\n"
+        f"• Protection Capital (SL): 1.0% fixe/trade\n"
+        f"• Circuit Breaker: 5 Pertes max ({bot_state['consecutive_losses']}/5)\n"
+        "• Filtre Correlation DXY: En ligne"
+    )
+    bot.send_message(message.chat.id, status_msg, parse_mode="Markdown")
 
-    @bot.message_handler(func=lambda m: m.text == "🚀 Scan Rang S + Macro")
-    def trigger_analysis(message):
-        if not bot_state["trading_active"]:
-            bot.send_message(message.chat.id, "⚠️ **Système Verrouillé.** Sécurité activée.")
-            return
+@bot.message_handler(func=lambda m: m.text in ["🚀 Scan Rang S + Macro", "/scan"])
+def trigger_analysis(message):
+    if not bot_state["trading_active"]:
+        bot.send_message(message.chat.id, "⚠️ **Système Verrouillé.** Sécurité activée.")
+        return
 
-        bot.send_message(message.chat.id, "⚡ *Analyse Quantitative & Filtrage Macro en cours...*", parse_mode="Markdown")
-        assets = ["EURUSD=X", "GBPUSD=X", "GC=F", "BTC-USD"]
-        asset_names = {"EURUSD=X": "EUR/USD", "GBPUSD=X": "GBP/USD", "GC=F": "OR (XAUUSD)", "BTC-USD": "BITCOIN"}
+    bot.send_message(message.chat.id, "⚡ *Analyse Quantitative & Filtrage Macro en cours...*", parse_mode="Markdown")
+    assets = ["EURUSD=X", "GBPUSD=X", "GC=F", "BTC-USD"]
+    asset_names = {"EURUSD=X": "EUR/USD", "GBPUSD=X": "GBP/USD", "GC=F": "OR (XAUUSD)", "BTC-USD": "BITCOIN"}
 
-        msg = "🎯 **Signaux Validés Rang S (Avec SL & Macro)**\n\n"
-        for asset in assets:
-            res = analyze_institutional_setup(asset)
-            name = asset_names.get(asset, asset)
-            if res and res['signal'] != "NEUTRE":
-                msg += f"🔥 **{name}** : Signal **{res['signal']}**\n"
-                msg += f"   • Prix: {res['price']}\n"
-                msg += f"   • 🛑 Stop Loss: {res['sl']}\n"
-                msg += f"   • 🎯 Take Profit 1: {res['tp1']}\n"
-                msg += f"   • 🎯 Take Profit 2: {res['tp2']}\n"
-                msg += f"   • 🌐 Filtre DXY: {res['dxy']}\n\n"
-            else:
-                msg += f"⚪ **{name}** : Pas de confluence SMC + Macro.\n\n"
+    msg = "🎯 **Signaux Validés Rang S (Avec SL & Macro)**\n\n"
+    for asset in assets:
+        res = analyze_institutional_setup(asset)
+        name = asset_names.get(asset, asset)
+        if res and res['signal'] != "NEUTRE":
+            msg += f"🔥 **{name}** : Signal **{res['signal']}**\n"
+            msg += f"   • Prix: {res['price']}\n"
+            msg += f"   • 🛑 Stop Loss: {res['sl']}\n"
+            msg += f"   • 🎯 Take Profit 1: {res['tp1']}\n"
+            msg += f"   • 🎯 Take Profit 2: {res['tp2']}\n"
+            msg += f"   • 🌐 Filtre DXY: {res['dxy']}\n\n"
+        else:
+            msg += f"⚪ **{name}** : Pas de confluence SMC + Macro.\n\n"
 
-        bot.send_message(message.chat.id, msg, parse_mode="Markdown")
+    bot.send_message(message.chat.id, msg, parse_mode="Markdown")
 
-    @bot.message_handler(func=lambda m: m.text == "🛑 KILL SWITCH")
-    def kill_switch(message):
-        bot_state["trading_active"] = False
-        bot.send_message(message.chat.id, "🛑 **ARRET D'URGENCE ACTIVÉ.** Moteur de trading stoppé.")
+@bot.message_handler(func=lambda m: m.text == "🛑 KILL SWITCH")
+def kill_switch(message):
+    bot_state["trading_active"] = False
+    bot.send_message(message.chat.id, "🛑 **ARRET D'URGENCE ACTIVÉ.** Moteur de trading stoppé.")
 
 # ---------------------------------------------------------
-# 6. LANCEMENT DU ROBOT
+# 6. EXÉCUTION DU POLLING
 # ---------------------------------------------------------
 if __name__ == "__main__":
-    Thread(target=run_flask).start()
-    if bot:
-        bot.polling(non_stop=True)
-        
+    print("Démarrage du bot Telegram Rang S...")
+    bot.infinity_polling(timeout=20, long_polling_timeout=10)
+    

@@ -21,9 +21,6 @@ if not TELEGRAM_TOKEN or not METAAPI_TOKEN:
 # Initialisation du Bot Telegram
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
 
-# Initialisation du client MetaAPI
-metaapi = MetaApi(token=METAAPI_TOKEN)
-
 # Serveur web Flask pour Render (health check)
 app = Flask(__name__)
 
@@ -31,7 +28,7 @@ app = Flask(__name__)
 def home():
     return "CLTM Quant Engine est en cours d'exécution.", 200
 
-# Dictionnaire pour la gestion d'état des utilisateurs
+# Dictionnaire temporaire pour la saisie utilisateur
 user_states = {}
 
 # --- COMMANDES TELEGRAM ---
@@ -68,9 +65,10 @@ def start_add_account(call):
     bot.answer_callback_query(call.id)
     bot.send_message(chat_id, "1️⃣ Entrez un **Nom de repère** pour ce compte :", parse_mode="Markdown")
 
-# Fonction asynchrone pour l'ajout MetaAPI
-async def create_metaapi_account(data):
-    account = await metaapi.metatrader_account_api.create_account({
+# Fonction asynchrone d'initialisation et de création de compte MetaAPI
+async def create_metaapi_account_async(data):
+    api = MetaApi(token=METAAPI_TOKEN)
+    account = await api.metatrader_account_api.create_account({
         'name': data['name'],
         'type': 'cloud',
         'login': data['login'],
@@ -95,7 +93,7 @@ def process_account_steps(message):
     elif step == 2:
         platform = message.text.strip().upper()
         if platform not in ["MT4", "MT5"]:
-            bot.send_message(chat_id, "⚠️ Répondez uniquement avec `MT4` ou `MT5` :", parse_mode="Markdown")
+            bot.send_message(chat_id, "⚠️ Veuillez écrire exactement `MT4` ou `MT5` :", parse_mode="Markdown")
             return
         state['platform'] = platform
         state['step'] = 3
@@ -116,11 +114,8 @@ def process_account_steps(message):
         bot.send_message(chat_id, "⏳ **Déploiement du compte sur MetaAPI en cours...**", parse_mode="Markdown")
 
         try:
-            # Exécution de la fonction asynchrone MetaAPI
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            account = loop.run_until_complete(create_metaapi_account(state))
-            loop.close()
+            # Exécution dans une boucle d'événements dédiée
+            account = asyncio.run(create_metaapi_account_async(state))
 
             bot.send_message(
                 chat_id,
@@ -147,7 +142,7 @@ def run_flask():
     app.run(host="0.0.0.0", port=port, use_reloader=False)
 
 if __name__ == "__main__":
-    # Lancement de Flask dans un thread séparé
+    # Lancement de Flask dans un thread séparé pour le health check de Render
     flask_thread = threading.Thread(target=run_flask)
     flask_thread.daemon = True
     flask_thread.start()
@@ -159,4 +154,4 @@ if __name__ == "__main__":
         bot.infinity_polling(drop_pending_updates=True, timeout=30, long_polling_timeout=5)
     except Exception as e:
         logging.critical(f"Erreur fatale bot: {e}")
-    
+        

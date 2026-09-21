@@ -1,6 +1,8 @@
 import os
 import sys
 import logging
+import asyncio
+import threading
 from flask import Flask
 import telebot
 from metaapi_cloud_sdk import MetaApi
@@ -19,7 +21,7 @@ if not TELEGRAM_TOKEN or not METAAPI_TOKEN:
 # Initialisation du Bot Telegram
 bot = telebot.TeleBot(TELEGRAM_TOKEN)
 
-# Initialisation du client MetaAPI (utilise l'URL officielle par défaut)
+# Initialisation du client MetaAPI
 metaapi = MetaApi(token=METAAPI_TOKEN)
 
 # Serveur web Flask pour Render (health check)
@@ -29,7 +31,7 @@ app = Flask(__name__)
 def home():
     return "CLTM Quant Engine est en cours d'exécution.", 200
 
-# Dictionnaire temporaire pour la saisie utilisateur
+# Dictionnaire pour la gestion d'état des utilisateurs
 user_states = {}
 
 # --- COMMANDES TELEGRAM ---
@@ -42,7 +44,7 @@ def send_welcome(message):
     markup.row("🔴 Activer Kill Switch")
     bot.send_message(
         message.chat.id,
-        "👋 Bienvenue sur **CLTM Quant Engine** !\nSélectionnez une option dans le menu ci-dessous.",
+        "👋 Bienvenue sur **CLTM Quant Engine** !\nSélectionnez une option ci-dessous :",
         reply_markup=markup,
         parse_mode="Markdown"
     )
@@ -64,7 +66,20 @@ def start_add_account(call):
     chat_id = call.message.chat.id
     user_states[chat_id] = {'step': 1}
     bot.answer_callback_query(call.id)
-    bot.send_message(chat_id, "1️⃣ Entrez un **Nom de repère** pour ce compte (ex: Compte Demo MT5) :", parse_mode="Markdown")
+    bot.send_message(chat_id, "1️⃣ Entrez un **Nom de repère** pour ce compte :", parse_mode="Markdown")
+
+# Fonction asynchrone pour l'ajout MetaAPI
+async def create_metaapi_account(data):
+    account = await metaapi.metatrader_account_api.create_account({
+        'name': data['name'],
+        'type': 'cloud',
+        'login': data['login'],
+        'password': data['password'],
+        'server': data['server'],
+        'platform': data['platform'].lower(),
+        'magic': 1000
+    })
+    return account
 
 @bot.message_handler(func=lambda msg: msg.chat.id in user_states)
 def process_account_steps(message):
@@ -80,7 +95,7 @@ def process_account_steps(message):
     elif step == 2:
         platform = message.text.strip().upper()
         if platform not in ["MT4", "MT5"]:
-            bot.send_message(chat_id, "⚠️ Veuillez écrire exactement `MT4` ou `MT5` :", parse_mode="Markdown")
+            bot.send_message(chat_id, "⚠️ Répondez uniquement avec `MT4` ou `MT5` :", parse_mode="Markdown")
             return
         state['platform'] = platform
         state['step'] = 3
@@ -99,23 +114,19 @@ def process_account_steps(message):
     elif step == 5:
         state['password'] = message.text.strip()
         bot.send_message(chat_id, "⏳ **Déploiement du compte sur MetaAPI en cours...**", parse_mode="Markdown")
-        
-        # Tentative d'ajout du compte sur MetaAPI
+
         try:
-            account = metaapi.provisioning_profile_api.create_account({
-                'name': state['name'],
-                'type': 'cloud',
-                'login': state['login'],
-                'password': state['password'],
-                'server': state['server'],
-                'platform': state['platform'].lower(),
-                'magic': 1000
-            })
+            # Exécution de la fonction asynchrone MetaAPI
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+            account = loop.run_until_complete(create_metaapi_account(state))
+            loop.close()
+
             bot.send_message(
                 chat_id,
                 f"✅ **Compte connecté avec succès !**\n\n"
                 f"• **Nom** : {state['name']}\n"
-                f"• **ID MetaAPI** : `{account['id']}`\n"
+                f"• **ID MetaAPI** : `{account.id}`\n"
                 f"• **Serveur** : {state['server']}",
                 parse_mode="Markdown"
             )
@@ -126,23 +137,26 @@ def process_account_steps(message):
                 f"❌ **Échec de la connexion MetaAPI :**\n`{str(e)}`",
                 parse_mode="Markdown"
             )
-        
-        # Réinitialisation de l'état
+
         del user_states[chat_id]
 
-# --- DÉMARRAGE DU SERVEUR ET DU BOT ---
+# --- LANCEMENT DU SERVEUR FLASK ET DU BOT ---
+
+def run_flask():
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port, use_reloader=False)
 
 if __name__ == "__main__":
-    import threading
-    
-    # Lancement du serveur Web en arrière-plan pour Render
-    port = int(os.environ.get("PORT", 10000))
-    flask_thread = threading.Thread(target=lambda: app.run(host="0.0.0.0", port=port, use_reloader=False))
+    # Lancement de Flask dans un thread séparé
+    flask_thread = threading.Thread(target=run_flask)
     flask_thread.daemon = True
     flask_thread.start()
 
-    # Démarrage propre du bot sans conflit de polling
-    logging.info("Démarrage du bot Telegram...")
-    bot.remove_webhook()
-    bot.infinity_polling(drop_pending_updates=True)
+    # Démarrage du bot Telegram
+    logging.info("Lancement du bot Telegram...")
+    try:
+        bot.remove_webhook()
+        bot.infinity_polling(drop_pending_updates=True, timeout=30, long_polling_timeout=5)
+    except Exception as e:
+        logging.critical(f"Erreur fatale bot: {e}")
     
